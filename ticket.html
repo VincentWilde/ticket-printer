@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Ticket Printer</title>
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, sans-serif; background: #f0f0f0;
+         display: flex; flex-direction: column; align-items: center;
+         justify-content: center; min-height: 100vh; padding: 20px; }
+  h1   { font-size: 22px; margin-bottom: 8px; color: #333; }
+  #status { font-size: 14px; color: #666; margin-bottom: 24px; min-height: 20px; text-align:center; }
+  #btn { width: 220px; height: 220px; border-radius: 50%;
+         background: linear-gradient(145deg, #1a1a2e, #16213e);
+         color: white; font-size: 22px; font-weight: bold;
+         border: none; cursor: pointer; box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+         transition: transform 0.1s; }
+  #btn:active { transform: scale(0.95); }
+  #btn:disabled { background: #999; cursor: not-allowed; }
+  #progress { width: 260px; height: 6px; background: #ddd; border-radius: 3px;
+              margin-top: 24px; overflow: hidden; display:none; }
+  #bar  { height: 100%; width: 0%; background: #1a1a2e; border-radius: 3px;
+          transition: width 0.3s; }
+</style>
+</head>
+<body>
+<h1>🎫 Ticket Printer</h1>
+<div id="status">Premi il tasto per stampare</div>
+<button id="btn" onclick="printTicket()">STAMPA</button>
+<div id="progress"><div id="bar"></div></div>
+
+<canvas id="cv" style="display:none"></canvas>
+
+<script>
+// ── BLE config ────────────────────────────────────────────────────
+const SERVICE_UUID = '0000ae30-0000-1000-8000-00805f9b34fb';
+const CHAR_UUID    = '0000ae01-0000-1000-8000-00805f9b34fb';
+const WIDTH        = 384;
+const SCALE        = 2;
+
+// ── CRC8 ─────────────────────────────────────────────────────────
+const CRC8_TABLE = [
+  0x00,0x07,0x0e,0x09,0x1c,0x1b,0x12,0x15,0x38,0x3f,0x36,0x31,0x24,0x23,0x2a,0x2d,
+  0x70,0x77,0x7e,0x79,0x6c,0x6b,0x62,0x65,0x48,0x4f,0x46,0x41,0x54,0x53,0x5a,0x5d,
+  0xe0,0xe7,0xee,0xe9,0xfc,0xfb,0xf2,0xf5,0xd8,0xdf,0xd6,0xd1,0xc4,0xc3,0xca,0xcd,
+  0x90,0x97,0x9e,0x99,0x8c,0x8b,0x82,0x85,0xa8,0xaf,0xa6,0xa1,0xb4,0xb3,0xba,0xbd,
+  0xc7,0xc0,0xc9,0xce,0xdb,0xdc,0xd5,0xd2,0xff,0xf8,0xf1,0xf6,0xe3,0xe4,0xed,0xea,
+  0xb7,0xb0,0xb9,0xbe,0xab,0xac,0xa5,0xa2,0x8f,0x88,0x81,0x86,0x93,0x94,0x9d,0x9a,
+  0x27,0x20,0x29,0x2e,0x3b,0x3c,0x35,0x32,0x1f,0x18,0x11,0x16,0x03,0x04,0x0d,0x0a,
+  0x57,0x50,0x59,0x5e,0x4b,0x4c,0x45,0x42,0x6f,0x68,0x61,0x66,0x73,0x74,0x7d,0x7a,
+  0x89,0x8e,0x87,0x80,0x95,0x92,0x9b,0x9c,0xb1,0xb6,0xbf,0xb8,0xad,0xaa,0xa3,0xa4,
+  0xf9,0xfe,0xf7,0xf0,0xe5,0xe2,0xeb,0xec,0xc1,0xc6,0xcf,0xc8,0xdd,0xda,0xd3,0xd4,
+  0x69,0x6e,0x67,0x60,0x75,0x72,0x7b,0x7c,0x51,0x56,0x5f,0x58,0x4d,0x4a,0x43,0x44,
+  0x19,0x1e,0x17,0x10,0x05,0x02,0x0b,0x0c,0x21,0x26,0x2f,0x28,0x3d,0x3a,0x33,0x34,
+  0x4e,0x49,0x40,0x47,0x52,0x55,0x5c,0x5b,0x76,0x71,0x78,0x7f,0x6a,0x6d,0x64,0x63,
+  0x3e,0x39,0x30,0x37,0x22,0x25,0x2c,0x2b,0x06,0x01,0x08,0x0f,0x1a,0x1d,0x14,0x13,
+  0xae,0xa9,0xa0,0xa7,0xb2,0xb5,0xbc,0xbb,0x96,0x91,0x98,0x9f,0x8a,0x8d,0x84,0x83,
+  0xde,0xd9,0xd0,0xd7,0xc2,0xc5,0xcc,0xcb,0xe6,0xe1,0xe8,0xef,0xfa,0xfd,0xf4,0xf3
+];
+function crc8(data) {
+  let c = 0;
+  for (const b of data) c = CRC8_TABLE[(c ^ b) & 0xFF];
+  return c & 0xFF;
+}
+function msg(cmd, data) {
+  const d = Array.from(data);
+  const pkt = [0x51,0x78,cmd,0x00,d.length,0x00,...d,crc8(d),0xFF];
+  return new Uint8Array(pkt);
+}
+function feed(steps)   { return msg(0xA1, [steps & 0xFF, (steps>>8) & 0xFF]); }
+function retract(steps){ return msg(0xA0, [steps & 0xFF, (steps>>8) & 0xFF]); }
+function energy(e)     { return msg(0xAF, [e & 0xFF, (e>>8) & 0xFF]); }
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// ── QR code ───────────────────────────────────────────────────────
+function makeQRCanvas(text, pxSize) {
+  const qr = qrcode(0, 'M');
+  qr.addData(text);
+  qr.make();
+  const n = qr.getModuleCount();
+  const cell = Math.floor(pxSize / n);
+  const total = cell * n;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = total;
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, total, total);
+  ctx.fillStyle = '#000';
+  for (let r = 0; r < n; r++)
+    for (let c2 = 0; c2 < n; c2++)
+      if (qr.isDark(r, c2))
+        ctx.fillRect(c2*cell, r*cell, cell, cell);
+  return { cv, size: total };
+}
+
+// ── Ticket renderer ───────────────────────────────────────────────
+function drawTicket(now) {
+  const W = WIDTH * SCALE;
+  const pad = 16 * SCALE;
+  const lines = [];
+  let totalH = 0;
+
+  // Helper: measure text height for a font size
+  const lineH = fs => Math.round(fs * SCALE * 1.35);
+
+  // Build sections
+  const sections = [];
+  const add = (type, ...args) => sections.push({ type, args });
+
+  const date   = now.toLocaleDateString('it-IT');
+  const time   = now.toLocaleTimeString('it-IT');
+  const valid  = now.toLocaleTimeString('it-IT', { hour:'2-digit', minute:'2-digit' });
+  const ticket = 'AA-31239';
+  const qrText = `TICKET:${ticket}|DATE:${date}|${time}`;
+
+  add('blank', 8);
+  add('center', 'Single Journey',         24, true);
+  add('center', 'incl. transfer 2 hours', 18, false);
+  add('center', 'Not Valid for SPECIAL',  18, false);
+  add('center', 'and NIGHT ROUTES',       18, false);
+  add('blank', 10);
+  add('divider');
+  add('blank', 6);
+  add('twocol', 'ORIGIN:',      'Valletta 18', 18);
+  add('twocol', 'DESTINATION:', 'Valletta 18', 18);
+  add('twocol', 'LAST:',        'Valletta 18', 18);
+  add('blank', 6);
+  add('divider');
+  add('blank', 6);
+  add('twocol', 'Ticket Number:', ticket,        18);
+  add('twocol', 'Payment mode:',  'CONTACTLESS', 18);
+  add('blank', 4);
+  add('twocol', '2.00 eur', 'EUR 2.00', 22, true);
+  add('blank', 6);
+  add('divider');
+  add('blank', 4);
+  add('twocol', 'DATE:',   `${date}  ${time}`, 16);
+  add('twocol', 'LINE:',   '35',               16);
+  add('twocol', 'PLATE:',  'BUS 627',          16);
+  add('twocol', 'DRIVER:', '11174  ETM: 2889', 16);
+  add('blank', 12);
+  add('qr', qrText, 180);
+  add('blank', 12);
+  add('divider', 2);
+  add('blank', 6);
+  add('center', 'VALID UNTIL:  ' + valid, 30, true);
+  add('blank', 4);
+  add('center', date, 26, true);
+  add('blank', 8);
+  add('divider');
+  add('center', '— HAVE A NICE DAY —', 16, false);
+  add('blank', 14);
+
+  // First pass: compute total height
+  for (const s of sections) {
+    if (s.type === 'blank')   totalH += s.args[0] * SCALE;
+    else if (s.type === 'divider') totalH += 8 * SCALE;
+    else if (s.type === 'center' || s.type === 'twocol') {
+      const fs = s.args[s.type === 'center' ? 1 : 2];
+      totalH += lineH(fs) + 6 * SCALE;
+    } else if (s.type === 'qr') {
+      totalH += s.args[1] * SCALE;
+    }
+  }
+
+  // Draw on canvas
+  const cv = document.getElementById('cv');
+  cv.width  = W;
+  cv.height = totalH;
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, W, totalH);
+  ctx.fillStyle = '#000';
+
+  let y = 0;
+  for (const s of sections) {
+    const { type, args } = s;
+    if (type === 'blank') { y += args[0] * SCALE; continue; }
+
+    if (type === 'divider') {
+      const th = (args[0] || 1) * SCALE;
+      ctx.fillRect(12*SCALE, y + 4*SCALE, W - 24*SCALE, th);
+      y += 8 * SCALE;
+      continue;
+    }
+
+    if (type === 'center') {
+      const [text, fs, bold] = args;
+      const h = lineH(fs);
+      ctx.font = `${bold?'bold ':''} ${fs*SCALE}px Helvetica, Arial`;
+      ctx.textBaseline = 'top';
+      const tw = ctx.measureText(text).width;
+      ctx.fillText(text, (W - tw) / 2, y + 3*SCALE);
+      y += h + 6 * SCALE;
+      continue;
+    }
+
+    if (type === 'twocol') {
+      const [label, value, fs, bold] = args;
+      const h = lineH(fs);
+      const fw = bold ? 'bold ' : '';
+      ctx.textBaseline = 'top';
+      ctx.font = `${fs*SCALE}px Helvetica, Arial`;
+      ctx.fillText(label, pad, y + 3*SCALE);
+      ctx.font = `${fw}${fs*SCALE}px Helvetica, Arial`;
+      const vw = ctx.measureText(value).width;
+      ctx.fillText(value, W - vw - pad, y + 3*SCALE);
+      y += h + 6 * SCALE;
+      continue;
+    }
+
+    if (type === 'qr') {
+      const [text, size] = args;
+      const { cv: qcv, size: qsz } = makeQRCanvas(text, size * SCALE);
+      ctx.drawImage(qcv, (W - qsz) / 2, y);
+      y += size * SCALE;
+      continue;
+    }
+  }
+
+  return cv;
+}
+
+// ── Image → 1bpp lines ────────────────────────────────────────────
+function canvasToLines(bigCanvas) {
+  // Scale 2x → 1x
+  const w = WIDTH, h = Math.floor(bigCanvas.height / SCALE);
+  const sm = document.createElement('canvas');
+  sm.width = w; sm.height = h;
+  const ctx = sm.getContext('2d');
+  ctx.drawImage(bigCanvas, 0, 0, w, h);
+
+  const { data } = ctx.getImageData(0, 0, w, h);
+  const lines = [];
+  for (let row = 0; row < h; row++) {
+    const bmp = new Array(48).fill(0);
+    for (let col = 0; col < w; col++) {
+      const i = (row * w + col) * 4;
+      const gray = 0.299*data[i] + 0.587*data[i+1] + 0.114*data[i+2];
+      if (gray < 200) {
+        const byte = Math.floor(col / 8);
+        bmp[byte] = (bmp[byte] >> 1) | 0x80;
+      } else {
+        const byte = Math.floor(col / 8);
+        bmp[byte] = bmp[byte] >> 1;
+      }
+    }
+    lines.push(bmp);
+  }
+  return lines;
+}
+
+// ── Main print function ───────────────────────────────────────────
+async function printTicket() {
+  const btn = document.getElementById('btn');
+  const statusEl = document.getElementById('status');
+  const progressEl = document.getElementById('progress');
+  const barEl = document.getElementById('bar');
+
+  btn.disabled = true;
+  progressEl.style.display = 'block';
+  barEl.style.width = '0%';
+
+  try {
+    statusEl.textContent = 'Connessione Bluetooth…';
+    const device = await navigator.bluetooth.requestDevice({
+      filters: [{ namePrefix: 'SC05' }],
+      optionalServices: [SERVICE_UUID]
+    });
+    statusEl.textContent = 'Connesso, preparo il ticket…';
+
+    const server  = await device.gatt.connect();
+    const service = await server.getPrimaryService(SERVICE_UUID);
+    const char    = await service.getCharacteristic(CHAR_UUID);
+
+    // Write helper with retry
+    const write = async (data) => {
+      try { await char.writeValueWithoutResponse(data); }
+      catch { await char.writeValue(data); }
+      await sleep(15);
+    };
+
+    // Init printer
+    await write(energy(65535));
+    await write(msg(0xA4, [5]));
+    await write(msg(0xBE, [0]));
+    await sleep(200);
+
+    // Build ticket
+    statusEl.textContent = 'Genero il ticket…';
+    const canvas = drawTicket(new Date());
+    const lines  = canvasToLines(canvas);
+    statusEl.textContent = `Stampo… (${lines.length} righe)`;
+
+    const retract1 = retract(1);
+    for (let i = 0; i < lines.length; i++) {
+      const bmp = msg(0xA2, lines[i]);
+      await write(bmp);
+      await write(retract1);
+      await write(bmp);
+      if (i % 10 === 0) {
+        barEl.style.width = `${Math.round(i / lines.length * 100)}%`;
+      }
+    }
+
+    await write(feed(48));
+    barEl.style.width = '100%';
+    await sleep(2000);
+
+    statusEl.textContent = '✅ Stampa completata!';
+    device.gatt.disconnect();
+  } catch (e) {
+    statusEl.textContent = '❌ Errore: ' + e.message;
+    console.error(e);
+  }
+
+  btn.disabled = false;
+  setTimeout(() => { progressEl.style.display = 'none'; }, 3000);
+}
+</script>
+</body>
+</html>
