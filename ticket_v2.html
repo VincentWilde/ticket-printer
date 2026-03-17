@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Ticket Printer v2</title>
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, sans-serif; background: #f0f0f0;
+         display: flex; flex-direction: column; align-items: center;
+         justify-content: center; min-height: 100vh; padding: 20px; }
+  h1   { font-size: 22px; margin-bottom: 8px; color: #333; }
+  #status { font-size: 14px; color: #666; margin-bottom: 24px; min-height: 20px; text-align:center; }
+  #btn { width: 220px; height: 220px; border-radius: 50%;
+         background: linear-gradient(145deg, #1a1a2e, #16213e);
+         color: white; font-size: 22px; font-weight: bold;
+         border: none; cursor: pointer; box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+         transition: transform 0.1s; }
+  #btn:active { transform: scale(0.95); }
+  #btn:disabled { background: #999; cursor: not-allowed; }
+  #progress { width: 260px; height: 6px; background: #ddd; border-radius: 3px;
+              margin-top: 24px; overflow: hidden; display:none; }
+  #bar { height: 100%; width: 0%; background: #1a1a2e; border-radius: 3px;
+         transition: width 0.3s; }
+</style>
+</head>
+<body>
+<h1>🎫 Ticket Printer v2</h1>
+<div id="status">Premi il tasto per stampare</div>
+<button id="btn" onclick="printTicket()">STAMPA</button>
+<div id="progress"><div id="bar"></div></div>
+<canvas id="cv" style="display:none"></canvas>
+
+<script>
+// ── Config ────────────────────────────────────────────────────────
+const SERVICE_UUID = '0000ae30-0000-1000-8000-00805f9b34fb';
+const CHAR_UUID    = '0000ae01-0000-1000-8000-00805f9b34fb';
+const WIDTH = 384, SCALE = 2, W = WIDTH * SCALE;
+const ML = 10 * SCALE;  // left margin
+
+// ── CRC8 ─────────────────────────────────────────────────────────
+const CRC8 = [
+  0x00,0x07,0x0e,0x09,0x1c,0x1b,0x12,0x15,0x38,0x3f,0x36,0x31,0x24,0x23,0x2a,0x2d,
+  0x70,0x77,0x7e,0x79,0x6c,0x6b,0x62,0x65,0x48,0x4f,0x46,0x41,0x54,0x53,0x5a,0x5d,
+  0xe0,0xe7,0xee,0xe9,0xfc,0xfb,0xf2,0xf5,0xd8,0xdf,0xd6,0xd1,0xc4,0xc3,0xca,0xcd,
+  0x90,0x97,0x9e,0x99,0x8c,0x8b,0x82,0x85,0xa8,0xaf,0xa6,0xa1,0xb4,0xb3,0xba,0xbd,
+  0xc7,0xc0,0xc9,0xce,0xdb,0xdc,0xd5,0xd2,0xff,0xf8,0xf1,0xf6,0xe3,0xe4,0xed,0xea,
+  0xb7,0xb0,0xb9,0xbe,0xab,0xac,0xa5,0xa2,0x8f,0x88,0x81,0x86,0x93,0x94,0x9d,0x9a,
+  0x27,0x20,0x29,0x2e,0x3b,0x3c,0x35,0x32,0x1f,0x18,0x11,0x16,0x03,0x04,0x0d,0x0a,
+  0x57,0x50,0x59,0x5e,0x4b,0x4c,0x45,0x42,0x6f,0x68,0x61,0x66,0x73,0x74,0x7d,0x7a,
+  0x89,0x8e,0x87,0x80,0x95,0x92,0x9b,0x9c,0xb1,0xb6,0xbf,0xb8,0xad,0xaa,0xa3,0xa4,
+  0xf9,0xfe,0xf7,0xf0,0xe5,0xe2,0xeb,0xec,0xc1,0xc6,0xcf,0xc8,0xdd,0xda,0xd3,0xd4,
+  0x69,0x6e,0x67,0x60,0x75,0x72,0x7b,0x7c,0x51,0x56,0x5f,0x58,0x4d,0x4a,0x43,0x44,
+  0x19,0x1e,0x17,0x10,0x05,0x02,0x0b,0x0c,0x21,0x26,0x2f,0x28,0x3d,0x3a,0x33,0x34,
+  0x4e,0x49,0x40,0x47,0x52,0x55,0x5c,0x5b,0x76,0x71,0x78,0x7f,0x6a,0x6d,0x64,0x63,
+  0x3e,0x39,0x30,0x37,0x22,0x25,0x2c,0x2b,0x06,0x01,0x08,0x0f,0x1a,0x1d,0x14,0x13,
+  0xae,0xa9,0xa0,0xa7,0xb2,0xb5,0xbc,0xbb,0x96,0x91,0x98,0x9f,0x8a,0x8d,0x84,0x83,
+  0xde,0xd9,0xd0,0xd7,0xc2,0xc5,0xcc,0xcb,0xe6,0xe1,0xe8,0xef,0xfa,0xfd,0xf4,0xf3
+];
+function crc8(d){let c=0;for(const b of d)c=CRC8[(c^b)&0xFF];return c&0xFF;}
+function msg(cmd,data){const d=[...data];return new Uint8Array([0x51,0x78,cmd,0x00,d.length,0x00,...d,crc8(d),0xFF]);}
+function feed(s){return msg(0xA1,[s&0xFF,(s>>8)&0xFF]);}
+function retract(s){return msg(0xA0,[s&0xFF,(s>>8)&0xFF]);}
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+
+// ── QR ────────────────────────────────────────────────────────────
+function makeQR(text, pxSize) {
+  const qr = qrcode(0,'M'); qr.addData(text); qr.make();
+  const n = qr.getModuleCount(), cell = Math.floor(pxSize/n), tot = cell*n;
+  const cv = document.createElement('canvas'); cv.width=cv.height=tot;
+  const ctx=cv.getContext('2d');
+  ctx.fillStyle='#fff'; ctx.fillRect(0,0,tot,tot);
+  ctx.fillStyle='#000';
+  for(let r=0;r<n;r++) for(let c=0;c<n;c++) if(qr.isDark(r,c)) ctx.fillRect(c*cell,r*cell,cell,cell);
+  return {cv, size:tot};
+}
+
+// ── Ticket draw ───────────────────────────────────────────────────
+function drawTicket(now) {
+  const cv = document.getElementById('cv');
+
+  const F  = fs => `${fs*SCALE}px "Courier New", Courier, monospace`;
+  const FB = fs => `bold ${fs*SCALE}px "Courier New", Courier, monospace`;
+  const FI = fs => `${fs*SCALE}px Impact, sans-serif`;
+  const LH = fs => Math.round(fs * SCALE * 1.45);
+
+  // Date helpers
+  const pad = n => String(n).padStart(2,'0');
+  const dd=pad(now.getDate()), mm=pad(now.getMonth()+1);
+  const yy=String(now.getFullYear()).slice(2), yyyy=String(now.getFullYear());
+  const hh=pad(now.getHours()), mi=pad(now.getMinutes()), ss=pad(now.getSeconds());
+  const dateShort = `${dd}/${mm}/${yy}`;
+  const dateLong  = `${dd}/${mm}/${yyyy}`;
+  const timeStr   = `${hh}:${mi}:${ss}`;
+  const validStr  = `${hh}:${mi}`;
+  const tnum      = 'AD-37572';
+  const qrTxt     = `TICKET:${tnum}|DATE:${dateShort}|${timeStr}`;
+
+  // Compute TAB stops by measuring longest label
+  const tmp = document.createElement('canvas').getContext('2d');
+  tmp.font = F(24);
+  const TAB_MAIN = ML + Math.max(...['ORIGIN:','DESTINATION:','LAST:','Ticket Number:','Payment mode:'].map(l=>tmp.measureText(l).width)) + 8*SCALE;
+  tmp.font = F(22);
+  const TAB_INFO = ML + Math.max(...['LINE:  81','DRIVER: 11420'].map(l=>tmp.measureText(l).width)) + 8*SCALE;
+
+  // Compute header block x (centered block, left-aligned inside)
+  tmp.font = F(22);
+  const hdrTexts = ['Single Journey','incl. transfer 2 hours','Not Valid for SPECIAL','and NIGHT ROUTES'];
+  const HDR_X = (W - Math.max(...hdrTexts.map(t=>tmp.measureText(t).width))) / 2;
+
+  const rows = [
+    {t:'blank', h:8},
+    {t:'bleft', text:'Single Journey',          fs:22, x:HDR_X},
+    {t:'bleft', text:'incl. transfer 2 hours',  fs:22, x:HDR_X},
+    {t:'bleft', text:'Not Valid for SPECIAL',   fs:22, x:HDR_X},
+    {t:'bleft', text:'and NIGHT ROUTES',        fs:22, x:HDR_X},
+    {t:'blank', h:20},
+    {t:'tab',   label:'ORIGIN:',        value:'Xerriex',        fs:24, tab:TAB_MAIN},
+    {t:'blank', h:24},
+    {t:'tab',   label:'DESTINATION:',   value:'Valletta 18',    fs:24, tab:TAB_MAIN},
+    {t:'tab',   label:'LAST:',          value:'Valletta 18',    fs:24, tab:TAB_MAIN},
+    {t:'blank', h:24},
+    {t:'tab',   label:'Ticket Number:', value:tnum,             fs:24, tab:TAB_MAIN},
+    {t:'blank', h:24},
+    {t:'tab',   label:'Payment mode:',  value:'CASH',           fs:24, tab:TAB_MAIN},
+    {t:'price', left:'2.00 eur',        right:'EUR 2.00',       fs:26, tab:TAB_MAIN},
+    {t:'blank', h:24},
+    {t:'left',  text:`DATE:  ${dateShort}  ${timeStr}`,         fs:22},
+    {t:'tab',   label:'LINE:  81',      value:'PLATE: BUS 930', fs:22, tab:TAB_INFO},
+    {t:'tab',   label:'DRIVER: 11420',  value:'ETM: 2855',      fs:22, tab:TAB_INFO},
+    {t:'blank', h:72},
+    {t:'qr',    text:qrTxt, size:160},
+    {t:'blank', h:80},
+    {t:'impact',text:`VALID UNTIL: ${validStr}`,                fs:30},
+    {t:'blank', h:10},
+    {t:'impact',text:dateLong,                                  fs:28},
+    {t:'blank', h:40},
+    {t:'center',text:'-- HAVE A NICE DAY --',                   fs:24},
+    {t:'blank', h:10},
+  ];
+
+  // First pass: compute total height
+  let totalH = 0;
+  for (const r of rows) {
+    if (r.t==='blank') { totalH += r.h * SCALE; continue; }
+    if (r.t==='qr')    { totalH += r.size * SCALE; continue; }
+    totalH += LH(r.fs) + 2*SCALE;
+  }
+
+  cv.width = W; cv.height = totalH;
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle='#fff'; ctx.fillRect(0,0,W,totalH);
+  ctx.fillStyle='#000';
+  ctx.textBaseline='top';
+
+  let y = 0;
+  for (const r of rows) {
+    if (r.t==='blank') { y += r.h*SCALE; continue; }
+
+    if (r.t==='qr') {
+      const {cv:qcv, size:qs} = makeQR(r.text, r.size*SCALE);
+      ctx.drawImage(qcv, (W-qs)/2, y);
+      y += r.size*SCALE; continue;
+    }
+
+    const h = LH(r.fs);
+
+    if (r.t==='bleft') {
+      ctx.font = F(r.fs);
+      ctx.fillText(r.text, r.x, y);
+      y += h + 2*SCALE; continue;
+    }
+
+    if (r.t==='left') {
+      ctx.font = F(r.fs);
+      ctx.fillText(r.text, ML, y);
+      y += h + 2*SCALE; continue;
+    }
+
+    if (r.t==='center') {
+      ctx.font = F(r.fs);
+      const tw = ctx.measureText(r.text).width;
+      ctx.fillText(r.text, (W-tw)/2, y);
+      y += h + 2*SCALE; continue;
+    }
+
+    if (r.t==='tab') {
+      ctx.font = F(r.fs);
+      ctx.fillText(r.label, ML, y);
+      ctx.fillText(r.value, r.tab, y);
+      y += h + 2*SCALE; continue;
+    }
+
+    if (r.t==='price') {
+      ctx.font = FB(r.fs);
+      ctx.fillText(r.left,  ML,    y);
+      ctx.fillText(r.right, r.tab, y);
+      y += h + 2*SCALE; continue;
+    }
+
+    if (r.t==='impact') {
+      ctx.font = FI(r.fs);
+      ctx.fillText(r.text, ML, y);
+      y += h + 2*SCALE; continue;
+    }
+  }
+
+  return cv;
+}
+
+// ── 1bpp conversion ───────────────────────────────────────────────
+function canvasToLines(bigCv) {
+  const w=WIDTH, h=Math.floor(bigCv.height/SCALE);
+  const sm=document.createElement('canvas'); sm.width=w; sm.height=h;
+  sm.getContext('2d').drawImage(bigCv,0,0,w,h);
+  const {data}=sm.getContext('2d').getImageData(0,0,w,h);
+  const lines=[];
+  for(let row=0;row<h;row++){
+    const bmp=new Array(48).fill(0);
+    for(let col=0;col<w;col++){
+      const i=(row*w+col)*4;
+      const gray=0.299*data[i]+0.587*data[i+1]+0.114*data[i+2];
+      const byte=Math.floor(col/8);
+      bmp[byte]>>=1;
+      if(gray<200) bmp[byte]|=0x80;
+    }
+    lines.push(bmp);
+  }
+  return lines;
+}
+
+// ── Print ─────────────────────────────────────────────────────────
+async function printTicket() {
+  const btn=document.getElementById('btn');
+  const statusEl=document.getElementById('status');
+  const progressEl=document.getElementById('progress');
+  const barEl=document.getElementById('bar');
+  btn.disabled=true; progressEl.style.display='block'; barEl.style.width='0%';
+
+  try {
+    statusEl.textContent='Connessione Bluetooth…';
+    const device=await navigator.bluetooth.requestDevice({
+      filters:[{namePrefix:'SC05'}], optionalServices:[SERVICE_UUID]
+    });
+    const server=await device.gatt.connect();
+    const service=await server.getPrimaryService(SERVICE_UUID);
+    const char=await service.getCharacteristic(CHAR_UUID);
+
+    const write=async(data)=>{
+      try{await char.writeValueWithoutResponse(data);}
+      catch{await char.writeValue(data);}
+      await sleep(15);
+    };
+
+    await write(msg(0xAF,[0xFF,0xFF]));
+    await write(msg(0xA4,[5]));
+    await write(msg(0xBE,[0]));
+    await sleep(200);
+
+    statusEl.textContent='Genero il ticket…';
+    const canvas=drawTicket(new Date());
+    const lines=canvasToLines(canvas);
+    statusEl.textContent=`Stampo… (${lines.length} righe)`;
+
+    const ret1=retract(1);
+    for(let i=0;i<lines.length;i++){
+      const bmp=msg(0xA2,lines[i]);
+      await write(bmp); await write(ret1); await write(bmp);
+      if(i%10===0) barEl.style.width=`${Math.round(i/lines.length*100)}%`;
+    }
+    await write(feed(48));
+    barEl.style.width='100%';
+    await sleep(2000);
+    statusEl.textContent='✅ Stampa completata!';
+    device.gatt.disconnect();
+  } catch(e) {
+    statusEl.textContent='❌ '+e.message;
+  }
+  btn.disabled=false;
+  setTimeout(()=>{progressEl.style.display='none';},3000);
+}
+</script>
+</body>
+</html>
