@@ -38,6 +38,7 @@ const SERVICE_UUID = '0000ae30-0000-1000-8000-00805f9b34fb';
 const CHAR_UUID    = '0000ae01-0000-1000-8000-00805f9b34fb';
 const WIDTH = 384, SCALE = 2, W = WIDTH * SCALE;
 const ML = 10 * SCALE;  // left margin
+const ENERGY_L = 0x30, ENERGY_H = 0x75; // 30000 = 0x7530
 
 // ── CRC8 ─────────────────────────────────────────────────────────
 const CRC8 = [
@@ -61,29 +62,46 @@ const CRC8 = [
 function crc8(d){let c=0;for(const b of d)c=CRC8[(c^b)&0xFF];return c&0xFF;}
 function msg(cmd,data){const d=[...data];return new Uint8Array([0x51,0x78,cmd,0x00,d.length,0x00,...d,crc8(d),0xFF]);}
 function feed(s){return msg(0xA1,[s&0xFF,(s>>8)&0xFF]);}
-function retract(s){return msg(0xA0,[s&0xFF,(s>>8)&0xFF]);}
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 
-// ── QR ────────────────────────────────────────────────────────────
+// ── Font helpers ──────────────────────────────────────────────────
+const F  = fs => `${fs*SCALE}px Arial, sans-serif`;
+const FB = fs => `bold ${fs*SCALE}px Arial, sans-serif`;
+// Futura Condensed Medium — PostScript name works in Safari/iOS/macOS Canvas
+const FF = fs => `${fs*SCALE}px "Futura-CondensedMedium", "Futura Condensed", Futura, sans-serif`;
+const LH = fs => Math.round(fs * SCALE * 1.45);
+
+// ── Draw text with custom letter-spacing (char by char) ───────────
+function fillTextSpaced(ctx, text, x, y, spacing) {
+  let cx = x;
+  for (const ch of text) {
+    ctx.fillText(ch, cx, y);
+    cx += ctx.measureText(ch).width + spacing;
+  }
+}
+
+// ── QR (rotated 90° CCW so finder patterns: TL, BL, BR) ──────────
 function makeQR(text, pxSize) {
   const qr = qrcode(0,'M'); qr.addData(text); qr.make();
   const n = qr.getModuleCount(), cell = Math.floor(pxSize/n), tot = cell*n;
-  const cv = document.createElement('canvas'); cv.width=cv.height=tot;
-  const ctx=cv.getContext('2d');
-  ctx.fillStyle='#fff'; ctx.fillRect(0,0,tot,tot);
-  ctx.fillStyle='#000';
-  for(let r=0;r<n;r++) for(let c=0;c<n;c++) if(qr.isDark(r,c)) ctx.fillRect(c*cell,r*cell,cell,cell);
-  return {cv, size:tot};
+  // draw standard QR
+  const raw = document.createElement('canvas'); raw.width=raw.height=tot;
+  const rctx = raw.getContext('2d');
+  rctx.fillStyle='#fff'; rctx.fillRect(0,0,tot,tot);
+  rctx.fillStyle='#000';
+  for(let r=0;r<n;r++) for(let c=0;c<n;c++) if(qr.isDark(r,c)) rctx.fillRect(c*cell,r*cell,cell,cell);
+  // rotate 90° CCW
+  const rot = document.createElement('canvas'); rot.width=rot.height=tot;
+  const rotctx = rot.getContext('2d');
+  rotctx.translate(tot/2, tot/2);
+  rotctx.rotate(-Math.PI/2);
+  rotctx.drawImage(raw, -tot/2, -tot/2);
+  return {cv: rot, size: tot};
 }
 
 // ── Ticket draw ───────────────────────────────────────────────────
 function drawTicket(now) {
   const cv = document.getElementById('cv');
-
-  const F  = fs => `${fs*SCALE}px "Courier New", Courier, monospace`;
-  const FB = fs => `bold ${fs*SCALE}px "Courier New", Courier, monospace`;
-  const FI = fs => `${fs*SCALE}px Impact, sans-serif`;
-  const LH = fs => Math.round(fs * SCALE * 1.45);
 
   // Date helpers
   const pad = n => String(n).padStart(2,'0');
@@ -97,47 +115,52 @@ function drawTicket(now) {
   const tnum      = 'AD-37572';
   const qrTxt     = `TICKET:${tnum}|DATE:${dateShort}|${timeStr}`;
 
-  // Compute TAB stops by measuring longest label
+  // Compute TAB stops (matching Python: size=22 for MAIN, size=20 for INFO)
   const tmp = document.createElement('canvas').getContext('2d');
-  tmp.font = F(24);
-  const TAB_MAIN = ML + Math.max(...['ORIGIN:','DESTINATION:','LAST:','Ticket Number:','Payment mode:'].map(l=>tmp.measureText(l).width)) + 8*SCALE;
   tmp.font = F(22);
+  const TAB_MAIN = ML + Math.max(...['ORIGIN:','DESTINATION:','LAST:','Ticket Number:','Payment mode:'].map(l=>tmp.measureText(l).width)) + 8*SCALE;
+  tmp.font = F(20);
   const TAB_INFO = ML + Math.max(...['LINE:  81','DRIVER: 11420'].map(l=>tmp.measureText(l).width)) + 8*SCALE;
 
-  // Compute header block x (centered block, left-aligned inside)
-  tmp.font = F(22);
+  // Compute header block x (centered block, left-aligned inside) — size=25
+  tmp.font = F(25);
   const hdrTexts = ['Single Journey','incl. transfer 2 hours','Not Valid for SPECIAL','and NIGHT ROUTES'];
   const HDR_X = (W - Math.max(...hdrTexts.map(t=>tmp.measureText(t).width))) / 2;
 
+  // Futura letter spacing: -2 * SCALE px between chars
+  const FUTURA_SPACING = -2 * SCALE;
+
+  const QR_SIZE = 190;
+
   const rows = [
-    {t:'blank', h:8},
-    {t:'bleft', text:'Single Journey',          fs:22, x:HDR_X},
-    {t:'bleft', text:'incl. transfer 2 hours',  fs:22, x:HDR_X},
-    {t:'bleft', text:'Not Valid for SPECIAL',   fs:22, x:HDR_X},
-    {t:'bleft', text:'and NIGHT ROUTES',        fs:22, x:HDR_X},
-    {t:'blank', h:20},
-    {t:'tab',   label:'ORIGIN:',        value:'Xerriex',        fs:24, tab:TAB_MAIN},
-    {t:'blank', h:24},
-    {t:'tab',   label:'DESTINATION:',   value:'Valletta 18',    fs:24, tab:TAB_MAIN},
-    {t:'tab',   label:'LAST:',          value:'Valletta 18',    fs:24, tab:TAB_MAIN},
-    {t:'blank', h:24},
-    {t:'tab',   label:'Ticket Number:', value:tnum,             fs:24, tab:TAB_MAIN},
-    {t:'blank', h:24},
-    {t:'tab',   label:'Payment mode:',  value:'CASH',           fs:24, tab:TAB_MAIN},
-    {t:'price', left:'2.00 eur',        right:'EUR 2.00',       fs:26, tab:TAB_MAIN},
-    {t:'blank', h:24},
-    {t:'left',  text:`DATE:  ${dateShort}  ${timeStr}`,         fs:22},
-    {t:'tab',   label:'LINE:  81',      value:'PLATE: BUS 930', fs:22, tab:TAB_INFO},
-    {t:'tab',   label:'DRIVER: 11420',  value:'ETM: 2855',      fs:22, tab:TAB_INFO},
-    {t:'blank', h:72},
-    {t:'qr',    text:qrTxt, size:160},
-    {t:'blank', h:80},
-    {t:'impact',text:`VALID UNTIL: ${validStr}`,                fs:30},
-    {t:'blank', h:10},
-    {t:'impact',text:dateLong,                                  fs:28},
-    {t:'blank', h:40},
-    {t:'center',text:'-- HAVE A NICE DAY --',                   fs:24},
-    {t:'blank', h:10},
+    {t:'blank', h:25},
+    {t:'bleft', text:'Single Journey',          fs:25, x:HDR_X},
+    {t:'bleft', text:'incl. transfer 2 hours',  fs:25, x:HDR_X},
+    {t:'bleft', text:'Not Valid for SPECIAL',   fs:25, x:HDR_X},
+    {t:'bleft', text:'and NIGHT ROUTES',        fs:25, x:HDR_X},
+    {t:'blank', h:35},
+    {t:'tab',   label:'ORIGIN:',        value:'Xerriex',              fs:22, tab:TAB_MAIN},
+    {t:'blank', h:35},
+    {t:'tab',   label:'DESTINATION:',   value:'      Valletta 18',    fs:22, tab:TAB_MAIN},
+    {t:'tab',   label:'LAST:',          value:'Valletta 18',          fs:22, tab:TAB_MAIN},
+    {t:'blank', h:35},
+    {t:'tab',   label:'Ticket Number:', value:tnum,                   fs:22, tab:TAB_MAIN},
+    {t:'blank', h:35},
+    {t:'tab',   label:'Payment mode:',  value:'CASH',                 fs:22, tab:TAB_MAIN},
+    {t:'price', left:'2.00 eur',        right:'   EUR 2.00',          fs:20, tab:TAB_MAIN},
+    {t:'blank', h:35},
+    {t:'left',  text:`DATE:  ${dateShort}  ${timeStr}`,               fs:20},
+    {t:'tab',   label:'LINE:  81',      value:'PLATE: BUS 930',       fs:20, tab:TAB_INFO},
+    {t:'tab',   label:'DRIVER: 11420',  value:'   ETM: 2855',         fs:20, tab:TAB_INFO},
+    {t:'blank', h:100},
+    {t:'qr',    text:qrTxt, size:QR_SIZE},
+    {t:'blank', h:130},
+    {t:'futura',text:`VALID UNTIL: ${validStr}`,                      fs:47, spacing:FUTURA_SPACING},
+    {t:'blank', h:45},
+    {t:'futura',text:dateLong,                                        fs:47, spacing:FUTURA_SPACING},
+    {t:'blank', h:45},
+    {t:'center',text:'-- HAVE A NICE DAY --',                         fs:30},
+    {t:'blank', h:50},
   ];
 
   // First pass: compute total height
@@ -194,14 +217,19 @@ function drawTicket(now) {
 
     if (r.t==='price') {
       ctx.font = FB(r.fs);
-      ctx.fillText(r.left,  ML,    y);
-      ctx.fillText(r.right, r.tab, y);
+      // stroke for extra darkness (matches stroke_width=2 in Python)
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = '#000';
+      ctx.strokeText(r.left,  ML,    y);
+      ctx.fillText(r.left,    ML,    y);
+      ctx.strokeText(r.right, r.tab, y);
+      ctx.fillText(r.right,   r.tab, y);
       y += h + 2*SCALE; continue;
     }
 
-    if (r.t==='impact') {
-      ctx.font = FI(r.fs);
-      ctx.fillText(r.text, ML, y);
+    if (r.t==='futura') {
+      ctx.font = FF(r.fs);
+      fillTextSpaced(ctx, r.text, ML, y, r.spacing);
       y += h + 2*SCALE; continue;
     }
   }
@@ -253,7 +281,7 @@ async function printTicket() {
       await sleep(15);
     };
 
-    await write(msg(0xAF,[0xFF,0xFF]));
+    await write(msg(0xAF,[ENERGY_L, ENERGY_H]));  // ENERGY = 30000
     await write(msg(0xA4,[5]));
     await write(msg(0xBE,[0]));
     await sleep(200);
@@ -263,10 +291,9 @@ async function printTicket() {
     const lines=canvasToLines(canvas);
     statusEl.textContent=`Stampo… (${lines.length} righe)`;
 
-    const ret1=retract(1);
     for(let i=0;i<lines.length;i++){
       const bmp=msg(0xA2,lines[i]);
-      await write(bmp); await write(ret1); await write(bmp);
+      await write(bmp);
       if(i%10===0) barEl.style.width=`${Math.round(i/lines.length*100)}%`;
     }
     await write(feed(48));
