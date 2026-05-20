@@ -213,8 +213,10 @@ function drawTicket(now) {
 function canvasToLines(bigCv) {
   const w=WIDTH, h=Math.floor(bigCv.height/SCALE);
   const sm=document.createElement('canvas'); sm.width=w; sm.height=h;
-  sm.getContext('2d').drawImage(bigCv,0,0,w,h);
-  const {data}=sm.getContext('2d').getImageData(0,0,w,h);
+  const sctx=sm.getContext('2d');
+  sctx.drawImage(bigCv,0,0,w,h);
+
+  const {data}=sctx.getImageData(0,0,w,h);
   const lines=[];
   for(let row=0;row<h;row++){
     const bmp=new Array(48).fill(0);
@@ -223,7 +225,8 @@ function canvasToLines(bigCv) {
       const gray=0.299*data[i]+0.587*data[i+1]+0.114*data[i+2];
       const byte=Math.floor(col/8);
       bmp[byte]>>=1;
-      if(gray<200) bmp[byte]|=0x80;
+      // Soglia 230: cattura i pixel grigio-chiari dell'anti-aliasing del browser
+      if(gray<230) bmp[byte]|=0x80;
     }
     lines.push(bmp);
   }
