@@ -63,7 +63,7 @@ const SERVICE_UUID = '0000ae30-0000-1000-8000-00805f9b34fb';
 const CHAR_UUID    = '0000ae01-0000-1000-8000-00805f9b34fb';
 const WIDTH = 384, SCALE = 2, W = WIDTH * SCALE;
 const ML = 10 * SCALE;  // left margin
-const ENERGY_L = 0x30, ENERGY_H = 0x75; // 30000 = 0x7530
+const ENERGY_L = 0xFF, ENERGY_H = 0xFF; // 65535 = max
 
 // ── CRC8 ─────────────────────────────────────────────────────────
 const CRC8 = [
@@ -87,6 +87,7 @@ const CRC8 = [
 function crc8(d){let c=0;for(const b of d)c=CRC8[(c^b)&0xFF];return c&0xFF;}
 function msg(cmd,data){const d=[...data];return new Uint8Array([0x51,0x78,cmd,0x00,d.length,0x00,...d,crc8(d),0xFF]);}
 function feed(s){return msg(0xA1,[s&0xFF,(s>>8)&0xFF]);}
+function retract(s){return msg(0xA0,[s&0xFF,(s>>8)&0xFF]);}
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 
 // ── Font helpers ──────────────────────────────────────────────────
@@ -372,9 +373,10 @@ async function printTicket(useCustomTime) {
     const lines=canvasToLines(canvas);
     statusEl.textContent=`Stampo… (${lines.length} righe)`;
 
+    const ret1=retract(1);
     for(let i=0;i<lines.length;i++){
       const bmp=msg(0xA2,lines[i]);
-      await write(bmp);
+      await write(bmp); await write(ret1); await write(bmp); await write(ret1); await write(bmp);
       if(i%10===0) barEl.style.width=`${Math.round(i/lines.length*100)}%`;
     }
     await write(feed(48));
