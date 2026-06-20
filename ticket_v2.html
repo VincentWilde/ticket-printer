@@ -64,6 +64,7 @@ const CHAR_UUID    = '0000ae01-0000-1000-8000-00805f9b34fb';
 const WIDTH = 384, SCALE = 2, W = WIDTH * SCALE;
 const ML = 10 * SCALE;  // left margin
 const ENERGY_L = 0xFF, ENERGY_H = 0xFF; // 65535 = max
+const PASSES = 5; // quante volte ri-stampare ogni riga: più alto = carta più bruciata (nera)
 
 // ── CRC8 ─────────────────────────────────────────────────────────
 const CRC8 = [
@@ -194,7 +195,7 @@ function drawTicket(now, customValidStr) {
   // Futura letter spacing: -2 * SCALE px between chars
   const FUTURA_SPACING = -2 * SCALE;
 
-  const QR_SIZE = 190;
+  const QR_SIZE = 170;
 
   const rows = [
     {t:'blank', h:25},
@@ -221,7 +222,7 @@ function drawTicket(now, customValidStr) {
     {t:'blank', h:130},
     {t:'futura',text:`   VALID UNTIL:   ${validStr}`,                      fs:47, spacing:FUTURA_SPACING},
     {t:'blank', h:45},
-    {t:'futura',text:dateLong,                                        fs:47, spacing:FUTURA_SPACING},
+    {t:'futura',text:`   ${dateLong}`,                                fs:47, spacing:FUTURA_SPACING},
     {t:'blank', h:45},
     {t:'center',text:'-- HAVE A NICE DAY --',                         fs:30},
     {t:'blank', h:50},
@@ -376,7 +377,7 @@ async function printTicket(useCustomTime) {
     const ret1=retract(1);
     for(let i=0;i<lines.length;i++){
       const bmp=msg(0xA2,lines[i]);
-      await write(bmp); await write(ret1); await write(bmp); await write(ret1); await write(bmp);
+      for(let p=0;p<PASSES;p++){ await write(bmp); if(p<PASSES-1) await write(ret1); }
       if(i%10===0) barEl.style.width=`${Math.round(i/lines.length*100)}%`;
     }
     await write(feed(48));
