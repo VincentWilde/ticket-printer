@@ -120,11 +120,14 @@ function textRowH(fontStr, text) {
 // ── Draw text with custom letter-spacing (char by char) ───────────
 // '/' is squeezed to SLASH_SCALE of its natural width (matches Python)
 const SLASH_SCALE = 0.45;
+// Le cifre e i due punti sono più schiacciati delle lettere (più negativo = più stretti)
+const DIGIT_SPACING = -4 * SCALE;
 
 function fillTextSpaced(ctx, text, x, y, h, spacing) {
   let cx = x;
   for (const ch of text) {
     const naturalW = ctx.measureText(ch).width;
+    const sp = /[0-9:]/.test(ch) ? DIGIT_SPACING : spacing;
     if (ch === '/') {
       const squeezedW = Math.max(2, Math.round(naturalW * SLASH_SCALE));
       // use ctx.scale to squeeze horizontally — handles bearing correctly
@@ -133,10 +136,10 @@ function fillTextSpaced(ctx, text, x, y, h, spacing) {
       ctx.scale(squeezedW / naturalW, 1);
       ctx.fillText(ch, 0, y);
       ctx.restore();
-      cx += squeezedW + spacing;
+      cx += squeezedW + sp;
     } else {
       ctx.fillText(ch, cx, y);
-      cx += naturalW + spacing;
+      cx += naturalW + sp;
     }
   }
 }
