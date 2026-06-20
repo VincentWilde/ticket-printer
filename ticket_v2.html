@@ -55,7 +55,8 @@
   <button id="btnCustom" onclick="printTicket(true)">STAMPA<br>ORARIO<br>SCELTO</button>
 </div>
 <div id="progress"><div id="bar"></div></div>
-<canvas id="cv" style="display:none"></canvas>
+<button id="btnPreview" onclick="previewTicket()" style="margin-top:18px;padding:10px 22px;font-size:15px;font-weight:bold;border:2px solid #1a1a2e;border-radius:8px;background:#fff;color:#1a1a2e;cursor:pointer;">👁️ ANTEPRIMA (senza stampare)</button>
+<canvas id="cv" style="display:none;margin-top:16px;width:384px;background:#fff;border:1px solid #ccc;box-shadow:0 4px 16px rgba(0,0,0,0.15);"></canvas>
 
 <script>
 // ── Config ────────────────────────────────────────────────────────
@@ -197,6 +198,11 @@ function drawTicket(now, customValidStr) {
 
   // Futura letter spacing: -2 * SCALE px between chars
   const FUTURA_SPACING = -2 * SCALE;
+  // Indent sinistro in pixel per "VALID UNTIL" e la data, così partono ESATTAMENTE
+  // dalla stessa x (gli spazi iniziali non erano affidabili con la spaziatura negativa).
+  tmp.font = FF(47);
+  let FUTURA_INDENT = 0;
+  for (const ch of '   ') FUTURA_INDENT += tmp.measureText(ch).width + FUTURA_SPACING;
 
   const QR_SIZE = 170;
 
@@ -223,9 +229,9 @@ function drawTicket(now, customValidStr) {
     {t:'blank', h:100},
     {t:'qr',    text:qrTxt, size:QR_SIZE},
     {t:'blank', h:130},
-    {t:'futura',text:`   VALID UNTIL:   ${validStr}`,                      fs:47, spacing:FUTURA_SPACING},
+    {t:'futura',text:`VALID UNTIL:   ${validStr}`,            fs:47, spacing:FUTURA_SPACING, x:ML+FUTURA_INDENT},
     {t:'blank', h:45},
-    {t:'futura',text:`   ${dateLong}`,                                fs:47, spacing:FUTURA_SPACING},
+    {t:'futura',text:dateLong,                                fs:47, spacing:FUTURA_SPACING, x:ML+FUTURA_INDENT},
     {t:'blank', h:45},
     {t:'center',text:'-- HAVE A NICE DAY --',                         fs:30},
     {t:'blank', h:50},
@@ -296,7 +302,7 @@ function drawTicket(now, customValidStr) {
 
     if (r.t==='futura') {
       ctx.font = FF(r.fs);
-      fillTextSpaced(ctx, r.text, ML, y, h, r.spacing);
+      fillTextSpaced(ctx, r.text, r.x ?? ML, y, h, r.spacing);
       y += h; continue;
     }
   }
@@ -332,6 +338,21 @@ window.addEventListener('load', () => {
   const pad = n => String(n).padStart(2,'0');
   document.getElementById('timeInput').value = `${pad(v.getHours())}:${pad(v.getMinutes())}`;
 });
+
+// Disegna il ticket a schermo senza stampare — per regolare il layout al volo
+async function previewTicket() {
+  const statusEl=document.getElementById('status');
+  try {
+    statusEl.textContent='Carico font…';
+    await document.fonts.load(`${47*2}px "FuturaCondensedMedium"`);
+    const ci=document.getElementById('timeInput').value;
+    const canvas=drawTicket(new Date(), ci || null);
+    canvas.style.display='block';
+    statusEl.textContent='👁️ Anteprima (non stampato)';
+  } catch(e) {
+    statusEl.textContent='❌ '+e.message;
+  }
+}
 
 async function printTicket(useCustomTime) {
   const btn=document.getElementById('btn');
