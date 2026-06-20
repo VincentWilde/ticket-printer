@@ -176,7 +176,7 @@ function drawTicket(now, customValidStr) {
     const v = new Date(now.getTime() + 3*60*60*1000);
     return `${pad(v.getHours())}:${pad(v.getMinutes())}`;
   })();
-  const tnum      = 'AD-37572';
+  const tnum      = 'AA-37570';
   const qrTxt     = `TICKET:${tnum}|DATE:${dateShort}|${timeStr}`;
 
   // Compute TAB stops (matching Python: size=22 for MAIN, size=20 for INFO)
@@ -184,7 +184,7 @@ function drawTicket(now, customValidStr) {
   tmp.font = F(22);
   const TAB_MAIN = ML + Math.max(...['ORIGIN:','DESTINATION:','LAST:','Ticket Number:','Payment mode:'].map(l=>tmp.measureText(l).width)) + 8*SCALE;
   tmp.font = F(20);
-  const TAB_INFO = ML + Math.max(...['LINE:  81','DRIVER: 11420'].map(l=>tmp.measureText(l).width)) + 8*SCALE;
+  const TAB_INFO = ML + Math.max(...['LINE:  35','DRIVER: 11420'].map(l=>tmp.measureText(l).width)) + 8*SCALE;
 
   // Compute header block x (centered block, left-aligned inside) — size=25
   tmp.font = F(25);
@@ -203,7 +203,7 @@ function drawTicket(now, customValidStr) {
     {t:'bleft', text:'Not Valid for SPECIAL',   fs:25, x:HDR_X},
     {t:'bleft', text:'and NIGHT ROUTES',        fs:25, x:HDR_X},
     {t:'blank', h:35},
-    {t:'tab',   label:'ORIGIN:',        value:'Xerriex',              fs:22, tab:TAB_MAIN},
+    {t:'tab',   label:'ORIGIN:',        value:'Ballal',              fs:22, tab:TAB_MAIN},
     {t:'blank', h:35},
     {t:'tab',   label:'DESTINATION:',   value:'      Valletta 18',    fs:22, tab:TAB_MAIN},
     {t:'tab',   label:'LAST:',          value:'Valletta 18',          fs:22, tab:TAB_MAIN},
@@ -214,12 +214,12 @@ function drawTicket(now, customValidStr) {
     {t:'price', left:'2.50 eur',        right:'   EUR 2.50',          fs:20, tab:TAB_MAIN},
     {t:'blank', h:35},
     {t:'left',  text:`DATE:  ${dateShort}  ${timeStr}`,               fs:20},
-    {t:'tab',   label:'LINE:  81',      value:'PLATE: BUS 930',       fs:20, tab:TAB_INFO},
+    {t:'tab',   label:'LINE:  35',      value:'PLATE: BUS 930',       fs:20, tab:TAB_INFO},
     {t:'tab',   label:'DRIVER: 11420',  value:'   ETM: 2855',         fs:20, tab:TAB_INFO},
     {t:'blank', h:100},
     {t:'qr',    text:qrTxt, size:QR_SIZE},
     {t:'blank', h:130},
-    {t:'futura',text:`VALID UNTIL: ${validStr}`,                      fs:47, spacing:FUTURA_SPACING},
+    {t:'futura',text:`   VALID UNTIL:   ${validStr}`,                      fs:47, spacing:FUTURA_SPACING},
     {t:'blank', h:45},
     {t:'futura',text:dateLong,                                        fs:47, spacing:FUTURA_SPACING},
     {t:'blank', h:45},
