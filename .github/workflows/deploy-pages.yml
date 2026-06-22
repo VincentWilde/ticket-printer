@@ -33,10 +33,39 @@ jobs:
         with:
           enablement: true
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Client-side encryption (StatiCrypt, AES-256). The ticket page is
+      # encrypted at build time using the PAGE_PASSWORD repository secret.
+      # Only the ciphertext is published: the password is never stored in
+      # the HTML or in the repo. Visitors must enter the password to decrypt
+      # the page in their browser. The plain index.html (a bare redirect with
+      # no sensitive content) is published as-is and points to the encrypted
+      # ticket page.
+      - name: Build encrypted site
+        env:
+          STATICRYPT_PASSWORD: ${{ secrets.PAGE_PASSWORD }}
+        run: |
+          if [ -z "$STATICRYPT_PASSWORD" ]; then
+            echo "::error::Missing PAGE_PASSWORD secret. Add it under Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+          mkdir -p _site
+          cp index.html _site/index.html
+          # --short: omit the how-to comment; --remember 30: keep the visitor
+          # unlocked for 30 days via localStorage so they don't retype each visit.
+          npx --yes staticrypt@3 ticket_v2.html \
+            --short \
+            --remember 30 \
+            -d _site
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: .
+          path: _site
 
       - name: Deploy to GitHub Pages
         id: deployment
